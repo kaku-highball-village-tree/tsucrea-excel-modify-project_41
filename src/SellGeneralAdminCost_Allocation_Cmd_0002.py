@@ -6047,6 +6047,7 @@ def create_step0010_pj_income_statement_excel_from_tsv(
 
     objWorkbook = load_workbook(pszTemplatePath)
     objSheet = objWorkbook.worksheets[0]
+    objSheet.title = pszYearMonth
     objRows = read_tsv_rows(pszStep0010Path)
     for iRowIndex, objRow in enumerate(objRows, start=1):
         for iColumnIndex, pszValue in enumerate(objRow, start=1):
@@ -6094,6 +6095,7 @@ def create_step0010_pj_income_statement_vertical_excel_from_tsv(
 
     objWorkbook = load_workbook(pszTemplatePath)
     objSheet = objWorkbook.worksheets[0]
+    objSheet.title = f"{pszYearMonth}_vertical"
     objRows = read_tsv_rows(pszStep0010VerticalPath)
     for iRowIndex, objRow in enumerate(objRows, start=1):
         for iColumnIndex, pszValue in enumerate(objRow, start=1):
