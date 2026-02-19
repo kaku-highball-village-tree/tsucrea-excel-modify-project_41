@@ -716,6 +716,42 @@ def recalculate_net_profit(
         objRows[iRowIndex] = objRow
 
 
+def apply_step0006_second_row_totals(objRows: List[List[str]]) -> List[List[str]]:
+    if len(objRows) < 2:
+        return objRows
+
+    objTargetColumns: List[str] = [
+        "配賦販管費",
+        "1Cカンパニー販管費",
+        "2Cカンパニー販管費",
+        "3Cカンパニー販管費",
+        "4Cカンパニー販管費",
+        "事業開発カンパニー販管費",
+    ]
+    objHeader: List[str] = objRows[0]
+    objOutputRows: List[List[str]] = [list(objRow) for objRow in objRows]
+    objTotalRow: List[str] = objOutputRows[1]
+
+    for pszColumnName in objTargetColumns:
+        iColumnIndex: int = find_column_index(objHeader, pszColumnName)
+        if iColumnIndex < 0:
+            continue
+
+        if iColumnIndex >= len(objTotalRow):
+            objTotalRow.extend([""] * (iColumnIndex + 1 - len(objTotalRow)))
+
+        fTotalValue: float = 0.0
+        for iRowIndex in range(2, len(objOutputRows)):
+            objRow: List[str] = objOutputRows[iRowIndex]
+            if iColumnIndex < len(objRow):
+                fTotalValue += parse_number(objRow[iColumnIndex])
+
+        objTotalRow[iColumnIndex] = format_number(fTotalValue)
+
+    objOutputRows[1] = objTotalRow
+    return objOutputRows
+
+
 def allocate_company_sg_admin_cost(objRows: List[List[str]]) -> List[List[str]]:
     if not objRows:
         return objRows
@@ -1290,6 +1326,8 @@ def process_pl_tsv(
             iPreTaxProfitColumnIndex,
             iNetProfitColumnIndex,
         )
+
+    objRows = apply_step0006_second_row_totals(objRows)
 
     with open(pszOutputStep0006Path, "w", encoding="utf-8", newline="") as objOutputFile:
         for objRow in objRows:
@@ -6009,6 +6047,7 @@ def create_step0010_pj_income_statement_excel_from_tsv(
 
     objWorkbook = load_workbook(pszTemplatePath)
     objSheet = objWorkbook.worksheets[0]
+    objSheet.title = pszYearMonth
     objRows = read_tsv_rows(pszStep0010Path)
     for iRowIndex, objRow in enumerate(objRows, start=1):
         for iColumnIndex, pszValue in enumerate(objRow, start=1):
@@ -6056,6 +6095,7 @@ def create_step0010_pj_income_statement_vertical_excel_from_tsv(
 
     objWorkbook = load_workbook(pszTemplatePath)
     objSheet = objWorkbook.worksheets[0]
+    objSheet.title = f"{pszYearMonth}_vertical"
     objRows = read_tsv_rows(pszStep0010VerticalPath)
     for iRowIndex, objRow in enumerate(objRows, start=1):
         for iColumnIndex, pszValue in enumerate(objRow, start=1):
@@ -6077,8 +6117,89 @@ def create_step0010_pj_income_statement_vertical_excel_from_tsv(
     return pszOutputPath
 
 
+def create_step0010_pj_income_statement_range_excel_from_tsvs(
+    pszDirectory: str,
+    objMonthlyPaths: List[str],
+    bVertical: bool,
+) -> Optional[str]:
+    if not objMonthlyPaths:
+        return None
+
+    objPathPairs: List[Tuple[Tuple[int, int], str]] = []
+    pszPattern = (
+        r"損益計算書_販管費配賦_step0010_(\d{4})年(\d{2})月_A∪B_プロジェクト名_C∪D_vertical\.tsv"
+        if bVertical
+        else r"損益計算書_販管費配賦_step0010_(\d{4})年(\d{2})月_A∪B_プロジェクト名_C∪D\.tsv"
+    )
+    for pszPath in objMonthlyPaths:
+        pszName: str = os.path.basename(pszPath)
+        objMatch = re.fullmatch(pszPattern, pszName)
+        if objMatch is None:
+            continue
+        iYear: int = int(objMatch.group(1))
+        iMonth: int = int(objMatch.group(2))
+        objPathPairs.append(((iYear, iMonth), pszPath))
+
+    if not objPathPairs:
+        return None
+
+    objPathPairs.sort(key=lambda objItem: objItem[0])
+    objStart = objPathPairs[0][0]
+    objEnd = objPathPairs[-1][0]
+    pszStartLabel: str = f"{objStart[0]}年{objStart[1]:02d}月"
+    pszEndLabel: str = f"{objEnd[0]}年{objEnd[1]:02d}月"
+
+    pszScriptDirectory: str = os.path.dirname(__file__)
+    pszTemplateName: str = (
+        "TEMPLATE_販管費配賦後_損益計算書_YYYY年MM月_A∪B_プロジェクト名_C∪D_vertical.xlsx"
+        if bVertical
+        else "TEMPLATE_販管費配賦後_損益計算書_YYYY年MM月_A∪B_プロジェクト名_C∪D.xlsx"
+    )
+    pszTemplatePath: str = os.path.join(pszScriptDirectory, pszTemplateName)
+    if not os.path.isfile(pszTemplatePath):
+        return None
+
+    objWorkbook = load_workbook(pszTemplatePath)
+    objTemplateSheet = objWorkbook.worksheets[0]
+
+    for iIndex, (objYearMonth, pszPath) in enumerate(objPathPairs):
+        pszSheetName: str = f"{objYearMonth[0]}年{objYearMonth[1]:02d}月"
+        if bVertical:
+            pszSheetName = f"{pszSheetName}_vertical"
+
+        if iIndex == 0:
+            objSheet = objTemplateSheet
+        else:
+            objSheet = objWorkbook.copy_worksheet(objTemplateSheet)
+        objSheet.title = pszSheetName
+
+        objRows = read_tsv_rows(pszPath)
+        for iRowIndex, objRow in enumerate(objRows, start=1):
+            for iColumnIndex, pszValue in enumerate(objRow, start=1):
+                objCellValue = parse_tsv_value_for_excel(pszValue)
+                objSheet.cell(row=iRowIndex, column=iColumnIndex, value=objCellValue)
+
+    pszOutputName: str = (
+        f"販管費配賦後_損益計算書_{pszStartLabel}-{pszEndLabel}_A∪B_プロジェクト名_C∪D_vertical.xlsx"
+        if bVertical
+        else f"販管費配賦後_損益計算書_{pszStartLabel}-{pszEndLabel}_A∪B_プロジェクト名_C∪D.xlsx"
+    )
+    pszOutputPath: str = os.path.join(pszDirectory, pszOutputName)
+    objWorkbook.save(pszOutputPath)
+    if EXECUTION_ROOT_DIRECTORY:
+        pszTargetDirectory = os.path.join(EXECUTION_ROOT_DIRECTORY, "PJ別損益計算書")
+        os.makedirs(pszTargetDirectory, exist_ok=True)
+        shutil.copy2(
+            pszOutputPath,
+            os.path.join(pszTargetDirectory, os.path.basename(pszOutputPath)),
+        )
+    return pszOutputPath
+
+
 def create_step0010_pj_income_statement_excels(pszDirectory: str) -> List[str]:
     objOutputs: List[str] = []
+    objMonthlyNormalPaths: List[str] = []
+    objMonthlyVerticalPaths: List[str] = []
     for pszName in sorted(os.listdir(pszDirectory)):
         pszPath = os.path.join(pszDirectory, pszName)
         if not os.path.isfile(pszPath):
@@ -6087,6 +6208,7 @@ def create_step0010_pj_income_statement_excels(pszDirectory: str) -> List[str]:
             r"損益計算書_販管費配賦_step0010_\d{4}年\d{2}月_A∪B_プロジェクト名_C∪D\.tsv",
             pszName,
         ) is not None:
+            objMonthlyNormalPaths.append(pszPath)
             pszOutput = create_step0010_pj_income_statement_excel_from_tsv(pszPath)
             if pszOutput is not None:
                 objOutputs.append(pszOutput)
@@ -6095,9 +6217,27 @@ def create_step0010_pj_income_statement_excels(pszDirectory: str) -> List[str]:
             r"損益計算書_販管費配賦_step0010_\d{4}年\d{2}月_A∪B_プロジェクト名_C∪D_vertical\.tsv",
             pszName,
         ) is not None:
+            objMonthlyVerticalPaths.append(pszPath)
             pszOutput = create_step0010_pj_income_statement_vertical_excel_from_tsv(pszPath)
             if pszOutput is not None:
                 objOutputs.append(pszOutput)
+
+    pszRangeOutput = create_step0010_pj_income_statement_range_excel_from_tsvs(
+        pszDirectory,
+        objMonthlyNormalPaths,
+        False,
+    )
+    if pszRangeOutput is not None:
+        objOutputs.append(pszRangeOutput)
+
+    pszRangeVerticalOutput = create_step0010_pj_income_statement_range_excel_from_tsvs(
+        pszDirectory,
+        objMonthlyVerticalPaths,
+        True,
+    )
+    if pszRangeVerticalOutput is not None:
+        objOutputs.append(pszRangeVerticalOutput)
+
     return objOutputs
 
 
