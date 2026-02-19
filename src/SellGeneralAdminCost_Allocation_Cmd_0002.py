@@ -716,6 +716,42 @@ def recalculate_net_profit(
         objRows[iRowIndex] = objRow
 
 
+def apply_step0006_second_row_totals(objRows: List[List[str]]) -> List[List[str]]:
+    if len(objRows) < 2:
+        return objRows
+
+    objTargetColumns: List[str] = [
+        "配賦販管費",
+        "1Cカンパニー販管費",
+        "2Cカンパニー販管費",
+        "3Cカンパニー販管費",
+        "4Cカンパニー販管費",
+        "事業開発カンパニー販管費",
+    ]
+    objHeader: List[str] = objRows[0]
+    objOutputRows: List[List[str]] = [list(objRow) for objRow in objRows]
+    objTotalRow: List[str] = objOutputRows[1]
+
+    for pszColumnName in objTargetColumns:
+        iColumnIndex: int = find_column_index(objHeader, pszColumnName)
+        if iColumnIndex < 0:
+            continue
+
+        if iColumnIndex >= len(objTotalRow):
+            objTotalRow.extend([""] * (iColumnIndex + 1 - len(objTotalRow)))
+
+        fTotalValue: float = 0.0
+        for iRowIndex in range(2, len(objOutputRows)):
+            objRow: List[str] = objOutputRows[iRowIndex]
+            if iColumnIndex < len(objRow):
+                fTotalValue += parse_number(objRow[iColumnIndex])
+
+        objTotalRow[iColumnIndex] = format_number(fTotalValue)
+
+    objOutputRows[1] = objTotalRow
+    return objOutputRows
+
+
 def allocate_company_sg_admin_cost(objRows: List[List[str]]) -> List[List[str]]:
     if not objRows:
         return objRows
@@ -1290,6 +1326,8 @@ def process_pl_tsv(
             iPreTaxProfitColumnIndex,
             iNetProfitColumnIndex,
         )
+
+    objRows = apply_step0006_second_row_totals(objRows)
 
     with open(pszOutputStep0006Path, "w", encoding="utf-8", newline="") as objOutputFile:
         for objRow in objRows:
