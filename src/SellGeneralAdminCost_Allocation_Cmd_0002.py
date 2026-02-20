@@ -6330,6 +6330,45 @@ def _clear_step0010_income_statement_borders_outside_data(
                 objSheet.cell(row=iRowIndex, column=iColumnIndex).border = Border()
 
 
+def _normalize_step0010_manhour_label_fonts(
+    objSheet,
+    iLastRow: int,
+) -> None:
+    if iLastRow <= 0:
+        return
+
+    objTargetNames: List[str] = [
+        "1Cカンパニー販管費の工数",
+        "2Cカンパニー販管費の工数",
+    ]
+    objSourceNamePriority: List[str] = [
+        "3Cカンパニー販管費の工数",
+        "4Cカンパニー販管費の工数",
+        "事業開発カンパニー販管費の工数",
+    ]
+
+    objNameToRowIndex: Dict[str, int] = {}
+    for iRowIndex in range(1, iLastRow + 1):
+        pszLabel = str(objSheet.cell(row=iRowIndex, column=1).value or "")
+        if pszLabel:
+            objNameToRowIndex[pszLabel] = iRowIndex
+
+    iSourceRowIndex: Optional[int] = None
+    for pszSourceName in objSourceNamePriority:
+        if pszSourceName in objNameToRowIndex:
+            iSourceRowIndex = objNameToRowIndex[pszSourceName]
+            break
+    if iSourceRowIndex is None:
+        return
+
+    objSourceFont = copy(objSheet.cell(row=iSourceRowIndex, column=1).font)
+    for pszTargetName in objTargetNames:
+        iTargetRowIndex = objNameToRowIndex.get(pszTargetName)
+        if iTargetRowIndex is None:
+            continue
+        objSheet.cell(row=iTargetRowIndex, column=1).font = copy(objSourceFont)
+
+
 def create_step0010_pj_income_statement_excel_from_tsv(
     pszStep0010Path: str,
 ) -> Optional[str]:
@@ -6370,6 +6409,7 @@ def create_step0010_pj_income_statement_excel_from_tsv(
         len(objRows),
         iLastColumn,
     )
+    _normalize_step0010_manhour_label_fonts(objSheet, len(objRows))
 
     pszOutputPath: str = os.path.join(
         os.path.dirname(pszStep0010Path),
@@ -6426,6 +6466,7 @@ def create_step0010_pj_income_statement_vertical_excel_from_tsv(
         len(objRows),
         iLastColumn,
     )
+    _normalize_step0010_manhour_label_fonts(objSheet, len(objRows))
 
     pszOutputPath: str = os.path.join(
         os.path.dirname(pszStep0010VerticalPath),
@@ -6511,6 +6552,7 @@ def create_step0010_pj_income_statement_range_excel_from_tsvs(
             len(objRows),
             iLastColumn,
         )
+        _normalize_step0010_manhour_label_fonts(objSheet, len(objRows))
 
     pszOutputName: str = (
         f"販管費配賦後_損益計算書_{pszStartLabel}-{pszEndLabel}_A∪B_プロジェクト名_C∪D_vertical.xlsx"
