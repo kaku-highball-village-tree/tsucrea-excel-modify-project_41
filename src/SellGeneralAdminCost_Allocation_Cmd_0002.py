@@ -5844,6 +5844,101 @@ def copy_group_step0006_files(
     )
 
 
+def _apply_gross_profit_ranking_borders(
+    objSheet,
+    iLastRow: int,
+) -> None:
+    if iLastRow <= 0:
+        return
+
+    objThickSide = Side(style="medium", color="000000")
+    objSolidSide = Side(style="thin", color="000000")
+    objDottedSide = Side(style="dotted")
+
+    def set_border(
+        iRowIndex: int,
+        iColumnIndex: int,
+        objLeft: Optional[Side] = None,
+        objRight: Optional[Side] = None,
+        objTop: Optional[Side] = None,
+        objBottom: Optional[Side] = None,
+    ) -> None:
+        objCell = objSheet.cell(row=iRowIndex, column=iColumnIndex)
+        objBorder = copy(objCell.border)
+        if objLeft is not None:
+            objBorder.left = objLeft
+        if objRight is not None:
+            objBorder.right = objRight
+        if objTop is not None:
+            objBorder.top = objTop
+        if objBottom is not None:
+            objBorder.bottom = objBottom
+        objCell.border = Border(
+            left=objBorder.left,
+            right=objBorder.right,
+            top=objBorder.top,
+            bottom=objBorder.bottom,
+            diagonal=objBorder.diagonal,
+            diagonal_direction=objBorder.diagonal_direction,
+            outline=objBorder.outline,
+            vertical=objBorder.vertical,
+            horizontal=objBorder.horizontal,
+        )
+
+    for iRowIndex in range(1, iLastRow + 1):
+        for iColumnIndex in range(1, 12):
+            if iColumnIndex == 6:
+                objSheet.cell(row=iRowIndex, column=iColumnIndex).border = Border()
+                continue
+
+            objLeft: Optional[Side] = None
+            objRight: Optional[Side] = None
+            objTop: Optional[Side] = None
+            objBottom: Optional[Side] = None
+
+            if iRowIndex == 1:
+                objTop = objThickSide
+            if iRowIndex == 2:
+                objBottom = objThickSide
+            elif 3 <= iRowIndex < iLastRow:
+                objBottom = objDottedSide
+            if iRowIndex == iLastRow:
+                objBottom = objThickSide
+
+            if iColumnIndex in (1, 7):
+                objLeft = objThickSide
+                objRight = objSolidSide
+            elif iColumnIndex in (5, 11):
+                objRight = objThickSide
+            else:
+                objRight = objSolidSide
+
+            set_border(
+                iRowIndex,
+                iColumnIndex,
+                objLeft=objLeft,
+                objRight=objRight,
+                objTop=objTop,
+                objBottom=objBottom,
+            )
+
+
+def _clear_gross_profit_ranking_borders_below_last_row(
+    objSheet,
+    iStartRow: int,
+) -> None:
+    if iStartRow <= 0:
+        return
+
+    iSheetMaxRow: int = objSheet.max_row
+    if iStartRow > iSheetMaxRow:
+        return
+
+    for iRowIndex in range(iStartRow, iSheetMaxRow + 1):
+        for iColumnIndex in range(1, 12):
+            objSheet.cell(row=iRowIndex, column=iColumnIndex).border = Border()
+
+
 def create_pj_summary_gross_profit_ranking_excel(pszDirectory: str) -> Optional[str]:
     pszInputPath: str = os.path.join(
         pszDirectory,
@@ -5874,6 +5969,10 @@ def create_pj_summary_gross_profit_ranking_excel(pszDirectory: str) -> Optional[
                 objFormatCell = objSheet.cell(row=iFormatRowIndex, column=iColumnIndex)
                 if objFormatCell.number_format:
                     objCell.number_format = objFormatCell.number_format
+
+    _apply_gross_profit_ranking_borders(objSheet, len(objRows))
+    _clear_gross_profit_ranking_borders_below_last_row(objSheet, len(objRows) + 1)
+
     pszTargetDirectory: str = os.path.join(pszDirectory, "PJサマリ")
     os.makedirs(pszTargetDirectory, exist_ok=True)
     pszOutputPath: str = os.path.join(
