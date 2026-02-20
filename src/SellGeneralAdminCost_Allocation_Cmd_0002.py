@@ -6236,6 +6236,100 @@ def create_pj_summary_pl_cr_manhour_excel(
     return pszOutputPath
 
 
+def _apply_step0010_income_statement_borders(
+    objSheet,
+    iLastRow: int,
+    iLastColumn: int,
+) -> None:
+    if iLastRow <= 0 or iLastColumn <= 0:
+        return
+
+    objThickSide = Side(style="medium", color="000000")
+    objSolidSide = Side(style="thin", color="000000")
+    objDottedSide = Side(style="dotted")
+
+    def set_border(
+        iRowIndex: int,
+        iColumnIndex: int,
+        objLeft: Optional[Side] = None,
+        objRight: Optional[Side] = None,
+        objTop: Optional[Side] = None,
+        objBottom: Optional[Side] = None,
+    ) -> None:
+        objCell = objSheet.cell(row=iRowIndex, column=iColumnIndex)
+        objBorder = copy(objCell.border)
+        if objLeft is not None:
+            objBorder.left = objLeft
+        if objRight is not None:
+            objBorder.right = objRight
+        if objTop is not None:
+            objBorder.top = objTop
+        if objBottom is not None:
+            objBorder.bottom = objBottom
+        objCell.border = Border(
+            left=objBorder.left,
+            right=objBorder.right,
+            top=objBorder.top,
+            bottom=objBorder.bottom,
+            diagonal=objBorder.diagonal,
+            diagonal_direction=objBorder.diagonal_direction,
+            outline=objBorder.outline,
+            vertical=objBorder.vertical,
+            horizontal=objBorder.horizontal,
+        )
+
+    for iRowIndex in range(1, iLastRow + 1):
+        for iColumnIndex in range(1, iLastColumn + 1):
+            objLeft: Optional[Side] = None
+            objRight: Optional[Side] = None
+            objTop: Optional[Side] = None
+            objBottom: Optional[Side] = None
+
+            if iColumnIndex == 1:
+                objLeft = objThickSide
+            else:
+                objLeft = objSolidSide
+
+            if iColumnIndex < iLastColumn:
+                objRight = objSolidSide
+
+            if iRowIndex == 1:
+                objBottom = objThickSide
+                objTop = objThickSide
+            elif iRowIndex < iLastRow:
+                objBottom = objDottedSide
+            else:
+                objBottom = objThickSide
+
+            set_border(
+                iRowIndex,
+                iColumnIndex,
+                objLeft=objLeft,
+                objRight=objRight,
+                objTop=objTop,
+                objBottom=objBottom,
+            )
+
+
+def _clear_step0010_income_statement_borders_outside_data(
+    objSheet,
+    iLastRow: int,
+    iLastColumn: int,
+) -> None:
+    iSheetMaxRow: int = objSheet.max_row
+    iSheetMaxColumn: int = objSheet.max_column
+
+    if iLastRow > 0 and iLastColumn > 0:
+        for iRowIndex in range(1, min(iLastRow, iSheetMaxRow) + 1):
+            for iColumnIndex in range(iLastColumn + 1, iSheetMaxColumn + 1):
+                objSheet.cell(row=iRowIndex, column=iColumnIndex).border = Border()
+
+    if iLastRow < iSheetMaxRow:
+        for iRowIndex in range(max(iLastRow + 1, 1), iSheetMaxRow + 1):
+            for iColumnIndex in range(1, iSheetMaxColumn + 1):
+                objSheet.cell(row=iRowIndex, column=iColumnIndex).border = Border()
+
+
 def create_step0010_pj_income_statement_excel_from_tsv(
     pszStep0010Path: str,
 ) -> Optional[str]:
@@ -6264,10 +6358,18 @@ def create_step0010_pj_income_statement_excel_from_tsv(
     objSheet = objWorkbook.worksheets[0]
     objSheet.title = pszYearMonth
     objRows = read_tsv_rows(pszStep0010Path)
+    iLastColumn: int = max((len(objRow) for objRow in objRows), default=0)
     for iRowIndex, objRow in enumerate(objRows, start=1):
         for iColumnIndex, pszValue in enumerate(objRow, start=1):
             objCellValue = parse_tsv_value_for_excel(pszValue)
             objSheet.cell(row=iRowIndex, column=iColumnIndex, value=objCellValue)
+
+    _apply_step0010_income_statement_borders(objSheet, len(objRows), iLastColumn)
+    _clear_step0010_income_statement_borders_outside_data(
+        objSheet,
+        len(objRows),
+        iLastColumn,
+    )
 
     pszOutputPath: str = os.path.join(
         os.path.dirname(pszStep0010Path),
@@ -6312,10 +6414,18 @@ def create_step0010_pj_income_statement_vertical_excel_from_tsv(
     objSheet = objWorkbook.worksheets[0]
     objSheet.title = f"{pszYearMonth}_vertical"
     objRows = read_tsv_rows(pszStep0010VerticalPath)
+    iLastColumn: int = max((len(objRow) for objRow in objRows), default=0)
     for iRowIndex, objRow in enumerate(objRows, start=1):
         for iColumnIndex, pszValue in enumerate(objRow, start=1):
             objCellValue = parse_tsv_value_for_excel(pszValue)
             objSheet.cell(row=iRowIndex, column=iColumnIndex, value=objCellValue)
+
+    _apply_step0010_income_statement_borders(objSheet, len(objRows), iLastColumn)
+    _clear_step0010_income_statement_borders_outside_data(
+        objSheet,
+        len(objRows),
+        iLastColumn,
+    )
 
     pszOutputPath: str = os.path.join(
         os.path.dirname(pszStep0010VerticalPath),
@@ -6389,10 +6499,18 @@ def create_step0010_pj_income_statement_range_excel_from_tsvs(
         objSheet.title = pszSheetName
 
         objRows = read_tsv_rows(pszPath)
+        iLastColumn: int = max((len(objRow) for objRow in objRows), default=0)
         for iRowIndex, objRow in enumerate(objRows, start=1):
             for iColumnIndex, pszValue in enumerate(objRow, start=1):
                 objCellValue = parse_tsv_value_for_excel(pszValue)
                 objSheet.cell(row=iRowIndex, column=iColumnIndex, value=objCellValue)
+
+        _apply_step0010_income_statement_borders(objSheet, len(objRows), iLastColumn)
+        _clear_step0010_income_statement_borders_outside_data(
+            objSheet,
+            len(objRows),
+            iLastColumn,
+        )
 
     pszOutputName: str = (
         f"販管費配賦後_損益計算書_{pszStartLabel}-{pszEndLabel}_A∪B_プロジェクト名_C∪D_vertical.xlsx"
