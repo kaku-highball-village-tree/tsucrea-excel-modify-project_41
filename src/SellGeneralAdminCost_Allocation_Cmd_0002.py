@@ -30,6 +30,7 @@ from copy import copy
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Dict, List, Optional, Tuple
 from openpyxl import load_workbook
+from openpyxl.styles import Border, Side
 
 
 def print_usage() -> None:
@@ -5892,6 +5893,92 @@ def create_pj_summary_gross_profit_ranking_excel(pszDirectory: str) -> Optional[
     return pszOutputPath
 
 
+def _apply_pj_summary_sales_cost_sg_admin_margin_borders(
+    objSheet,
+    iLastRow: int,
+    iLastColumn: int,
+) -> None:
+    if iLastRow <= 0 or iLastColumn <= 0:
+        return
+
+    objThickSide = Side(style="medium", color="000000")
+    objSolidSide = Side(style="thin", color="000000")
+    objDottedSide = Side(style="dotted", color="000000")
+
+    def set_border(
+        iRowIndex: int,
+        iColumnIndex: int,
+        objLeft: Optional[Side] = None,
+        objRight: Optional[Side] = None,
+        objTop: Optional[Side] = None,
+        objBottom: Optional[Side] = None,
+    ) -> None:
+        objCell = objSheet.cell(row=iRowIndex, column=iColumnIndex)
+        objBorder = copy(objCell.border)
+        if objLeft is not None:
+            objBorder.left = objLeft
+        if objRight is not None:
+            objBorder.right = objRight
+        if objTop is not None:
+            objBorder.top = objTop
+        if objBottom is not None:
+            objBorder.bottom = objBottom
+        objCell.border = Border(
+            left=objBorder.left,
+            right=objBorder.right,
+            top=objBorder.top,
+            bottom=objBorder.bottom,
+            diagonal=objBorder.diagonal,
+            diagonal_direction=objBorder.diagonal_direction,
+            outline=objBorder.outline,
+            vertical=objBorder.vertical,
+            horizontal=objBorder.horizontal,
+        )
+
+    for iRowIndex in range(1, iLastRow + 1):
+        for iColumnIndex in range(1, iLastColumn + 1):
+            objLeft: Optional[Side] = None
+            objRight: Optional[Side] = None
+            objTop: Optional[Side] = None
+            objBottom: Optional[Side] = None
+
+            if iRowIndex == 1:
+                objTop = objThickSide
+            if iRowIndex == 2:
+                objBottom = objThickSide
+            elif 3 <= iRowIndex < iLastRow:
+                objBottom = objDottedSide
+            if iRowIndex == iLastRow:
+                objBottom = objThickSide
+
+            if iColumnIndex == 1:
+                objLeft = objThickSide
+                objRight = objSolidSide
+            elif iColumnIndex == 2:
+                objRight = objSolidSide
+            elif iColumnIndex == 3:
+                objRight = objThickSide
+            elif iColumnIndex >= 4:
+                if (iColumnIndex - 4) % 2 == 0:
+                    objLeft = objThickSide
+                    objRight = objSolidSide
+                else:
+                    objLeft = objSolidSide
+                    objRight = objThickSide
+
+            if iColumnIndex == iLastColumn:
+                objRight = objThickSide
+
+            set_border(
+                iRowIndex,
+                iColumnIndex,
+                objLeft=objLeft,
+                objRight=objRight,
+                objTop=objTop,
+                objBottom=objBottom,
+            )
+
+
 def create_pj_summary_sales_cost_sg_admin_margin_excel(pszDirectory: str) -> Optional[str]:
     objCandidates: List[str] = []
     objPattern = re.compile(r"^0001_PJサマリ_step0009_.*_単月・累計_損益計算書\.tsv$")
@@ -5922,6 +6009,7 @@ def create_pj_summary_sales_cost_sg_admin_margin_excel(pszDirectory: str) -> Opt
             objSheet.title = objSheetNameMatch.group(1)
         objRows = read_tsv_rows(os.path.join(pszDirectory, pszInputName))
         iFormatRowIndex: int = 2 if objSheet.max_row >= 2 else 1
+        iLastColumn: int = max((len(objRow) for objRow in objRows), default=0)
         for iRowIndex, objRow in enumerate(objRows, start=1):
             for iColumnIndex, pszValue in enumerate(objRow, start=1):
                 objCellValue = parse_tsv_value_for_excel(pszValue)
@@ -5934,6 +6022,11 @@ def create_pj_summary_sales_cost_sg_admin_margin_excel(pszDirectory: str) -> Opt
                     objFormatCell = objSheet.cell(row=iFormatRowIndex, column=iColumnIndex)
                     if objFormatCell.number_format:
                         objCell.number_format = objFormatCell.number_format
+        _apply_pj_summary_sales_cost_sg_admin_margin_borders(
+            objSheet,
+            len(objRows),
+            iLastColumn,
+        )
     pszTargetDirectory: str = os.path.join(pszDirectory, "PJサマリ")
     os.makedirs(pszTargetDirectory, exist_ok=True)
     pszOutputPath: str = os.path.join(
