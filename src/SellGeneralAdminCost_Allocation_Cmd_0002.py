@@ -5903,7 +5903,7 @@ def _apply_pj_summary_sales_cost_sg_admin_margin_borders(
 
     objThickSide = Side(style="medium", color="000000")
     objSolidSide = Side(style="thin", color="000000")
-    objDottedSide = Side(style="dotted", color="000000")
+    objDottedSide = Side(style="dotted")
 
     def set_border(
         iRowIndex: int,
@@ -5979,6 +5979,24 @@ def _apply_pj_summary_sales_cost_sg_admin_margin_borders(
             )
 
 
+def _clear_sheet_borders_below_last_row(
+    objSheet,
+    iStartRow: int,
+    iLastColumn: int,
+) -> None:
+    if iStartRow <= 0 or iLastColumn <= 0:
+        return
+
+    iSheetMaxRow: int = objSheet.max_row
+    if iStartRow > iSheetMaxRow:
+        return
+
+    for iRowIndex in range(iStartRow, iSheetMaxRow + 1):
+        for iColumnIndex in range(1, iLastColumn + 1):
+            objCell = objSheet.cell(row=iRowIndex, column=iColumnIndex)
+            objCell.border = Border()
+
+
 def create_pj_summary_sales_cost_sg_admin_margin_excel(pszDirectory: str) -> Optional[str]:
     objCandidates: List[str] = []
     objPattern = re.compile(r"^0001_PJサマリ_step0009_.*_単月・累計_損益計算書\.tsv$")
@@ -6026,6 +6044,11 @@ def create_pj_summary_sales_cost_sg_admin_margin_excel(pszDirectory: str) -> Opt
             objSheet,
             len(objRows),
             iLastColumn,
+        )
+        _clear_sheet_borders_below_last_row(
+            objSheet,
+            len(objRows) + 1,
+            max(iLastColumn, objSheet.max_column),
         )
     pszTargetDirectory: str = os.path.join(pszDirectory, "PJサマリ")
     os.makedirs(pszTargetDirectory, exist_ok=True)
