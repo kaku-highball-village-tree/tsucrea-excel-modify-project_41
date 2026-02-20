@@ -5903,7 +5903,7 @@ def _apply_pj_summary_sales_cost_sg_admin_margin_borders(
 
     objThickSide = Side(style="medium", color="000000")
     objSolidSide = Side(style="thin", color="000000")
-    objDottedSide = Side(style="dotted", color="000000")
+    objDottedSide = Side(style="dotted")
 
     def set_border(
         iRowIndex: int,
