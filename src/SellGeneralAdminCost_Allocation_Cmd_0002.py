@@ -25,11 +25,13 @@ import os
 import shutil
 import re
 import sys
+import csv
 from datetime import datetime
 from copy import copy
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Dict, List, Optional, Tuple
 from openpyxl import load_workbook
+from openpyxl.styles import Border, Side
 
 
 def print_usage() -> None:
@@ -716,6 +718,42 @@ def recalculate_net_profit(
         objRows[iRowIndex] = objRow
 
 
+def apply_step0006_second_row_totals(objRows: List[List[str]]) -> List[List[str]]:
+    if len(objRows) < 2:
+        return objRows
+
+    objTargetColumns: List[str] = [
+        "配賦販管費",
+        "1Cカンパニー販管費",
+        "2Cカンパニー販管費",
+        "3Cカンパニー販管費",
+        "4Cカンパニー販管費",
+        "事業開発カンパニー販管費",
+    ]
+    objHeader: List[str] = objRows[0]
+    objOutputRows: List[List[str]] = [list(objRow) for objRow in objRows]
+    objTotalRow: List[str] = objOutputRows[1]
+
+    for pszColumnName in objTargetColumns:
+        iColumnIndex: int = find_column_index(objHeader, pszColumnName)
+        if iColumnIndex < 0:
+            continue
+
+        if iColumnIndex >= len(objTotalRow):
+            objTotalRow.extend([""] * (iColumnIndex + 1 - len(objTotalRow)))
+
+        fTotalValue: float = 0.0
+        for iRowIndex in range(2, len(objOutputRows)):
+            objRow: List[str] = objOutputRows[iRowIndex]
+            if iColumnIndex < len(objRow):
+                fTotalValue += parse_number(objRow[iColumnIndex])
+
+        objTotalRow[iColumnIndex] = format_number(fTotalValue)
+
+    objOutputRows[1] = objTotalRow
+    return objOutputRows
+
+
 def allocate_company_sg_admin_cost(objRows: List[List[str]]) -> List[List[str]]:
     if not objRows:
         return objRows
@@ -1290,6 +1328,8 @@ def process_pl_tsv(
             iPreTaxProfitColumnIndex,
             iNetProfitColumnIndex,
         )
+
+    objRows = apply_step0006_second_row_totals(objRows)
 
     with open(pszOutputStep0006Path, "w", encoding="utf-8", newline="") as objOutputFile:
         for objRow in objRows:
@@ -5805,6 +5845,101 @@ def copy_group_step0006_files(
     )
 
 
+def _apply_gross_profit_ranking_borders(
+    objSheet,
+    iLastRow: int,
+) -> None:
+    if iLastRow <= 0:
+        return
+
+    objThickSide = Side(style="medium", color="000000")
+    objSolidSide = Side(style="thin", color="000000")
+    objDottedSide = Side(style="dotted")
+
+    def set_border(
+        iRowIndex: int,
+        iColumnIndex: int,
+        objLeft: Optional[Side] = None,
+        objRight: Optional[Side] = None,
+        objTop: Optional[Side] = None,
+        objBottom: Optional[Side] = None,
+    ) -> None:
+        objCell = objSheet.cell(row=iRowIndex, column=iColumnIndex)
+        objBorder = copy(objCell.border)
+        if objLeft is not None:
+            objBorder.left = objLeft
+        if objRight is not None:
+            objBorder.right = objRight
+        if objTop is not None:
+            objBorder.top = objTop
+        if objBottom is not None:
+            objBorder.bottom = objBottom
+        objCell.border = Border(
+            left=objBorder.left,
+            right=objBorder.right,
+            top=objBorder.top,
+            bottom=objBorder.bottom,
+            diagonal=objBorder.diagonal,
+            diagonal_direction=objBorder.diagonal_direction,
+            outline=objBorder.outline,
+            vertical=objBorder.vertical,
+            horizontal=objBorder.horizontal,
+        )
+
+    for iRowIndex in range(1, iLastRow + 1):
+        for iColumnIndex in range(1, 12):
+            if iColumnIndex == 6:
+                objSheet.cell(row=iRowIndex, column=iColumnIndex).border = Border()
+                continue
+
+            objLeft: Optional[Side] = None
+            objRight: Optional[Side] = None
+            objTop: Optional[Side] = None
+            objBottom: Optional[Side] = None
+
+            if iRowIndex == 1:
+                objTop = objThickSide
+            if iRowIndex == 2:
+                objBottom = objThickSide
+            elif 3 <= iRowIndex < iLastRow:
+                objBottom = objDottedSide
+            if iRowIndex == iLastRow:
+                objBottom = objThickSide
+
+            if iColumnIndex in (1, 7):
+                objLeft = objThickSide
+                objRight = objSolidSide
+            elif iColumnIndex in (5, 11):
+                objRight = objThickSide
+            else:
+                objRight = objSolidSide
+
+            set_border(
+                iRowIndex,
+                iColumnIndex,
+                objLeft=objLeft,
+                objRight=objRight,
+                objTop=objTop,
+                objBottom=objBottom,
+            )
+
+
+def _clear_gross_profit_ranking_borders_below_last_row(
+    objSheet,
+    iStartRow: int,
+) -> None:
+    if iStartRow <= 0:
+        return
+
+    iSheetMaxRow: int = objSheet.max_row
+    if iStartRow > iSheetMaxRow:
+        return
+
+    for iRowIndex in range(iStartRow, iSheetMaxRow + 1):
+        for iColumnIndex in range(1, 12):
+            objSheet.cell(row=iRowIndex, column=iColumnIndex).border = Border()
+
+
 def create_pj_summary_gross_profit_ranking_excel(pszDirectory: str) -> Optional[str]:
     pszInputPath: str = os.path.join(
         pszDirectory,
@@ -5835,6 +5970,10 @@ def create_pj_summary_gross_profit_ranking_excel(pszDirectory: str) -> Optional[
                 objFormatCell = objSheet.cell(row=iFormatRowIndex, column=iColumnIndex)
                 if objFormatCell.number_format:
                     objCell.number_format = objFormatCell.number_format
+
+    _apply_gross_profit_ranking_borders(objSheet, len(objRows))
+    _clear_gross_profit_ranking_borders_below_last_row(objSheet, len(objRows) + 1)
+
     pszTargetDirectory: str = os.path.join(pszDirectory, "PJサマリ")
     os.makedirs(pszTargetDirectory, exist_ok=True)
     pszOutputPath: str = os.path.join(
@@ -5852,6 +5991,110 @@ def create_pj_summary_gross_profit_ranking_excel(pszDirectory: str) -> Optional[
         if os.path.abspath(pszCopyPath) != os.path.abspath(pszOutputPath):
             shutil.copy2(pszOutputPath, pszCopyPath)
     return pszOutputPath
+
+
+def _apply_pj_summary_sales_cost_sg_admin_margin_borders(
+    objSheet,
+    iLastRow: int,
+    iLastColumn: int,
+) -> None:
+    if iLastRow <= 0 or iLastColumn <= 0:
+        return
+
+    objThickSide = Side(style="medium", color="000000")
+    objSolidSide = Side(style="thin", color="000000")
+    objDottedSide = Side(style="dotted")
+
+    def set_border(
+        iRowIndex: int,
+        iColumnIndex: int,
+        objLeft: Optional[Side] = None,
+        objRight: Optional[Side] = None,
+        objTop: Optional[Side] = None,
+        objBottom: Optional[Side] = None,
+    ) -> None:
+        objCell = objSheet.cell(row=iRowIndex, column=iColumnIndex)
+        objBorder = copy(objCell.border)
+        if objLeft is not None:
+            objBorder.left = objLeft
+        if objRight is not None:
+            objBorder.right = objRight
+        if objTop is not None:
+            objBorder.top = objTop
+        if objBottom is not None:
+            objBorder.bottom = objBottom
+        objCell.border = Border(
+            left=objBorder.left,
+            right=objBorder.right,
+            top=objBorder.top,
+            bottom=objBorder.bottom,
+            diagonal=objBorder.diagonal,
+            diagonal_direction=objBorder.diagonal_direction,
+            outline=objBorder.outline,
+            vertical=objBorder.vertical,
+            horizontal=objBorder.horizontal,
+        )
+
+    for iRowIndex in range(1, iLastRow + 1):
+        for iColumnIndex in range(1, iLastColumn + 1):
+            objLeft: Optional[Side] = None
+            objRight: Optional[Side] = None
+            objTop: Optional[Side] = None
+            objBottom: Optional[Side] = None
+
+            if iRowIndex == 1:
+                objTop = objThickSide
+            if iRowIndex == 2:
+                objBottom = objThickSide
+            elif 3 <= iRowIndex < iLastRow:
+                objBottom = objDottedSide
+            if iRowIndex == iLastRow:
+                objBottom = objThickSide
+
+            if iColumnIndex == 1:
+                objLeft = objThickSide
+                objRight = objSolidSide
+            elif iColumnIndex == 2:
+                objRight = objSolidSide
+            elif iColumnIndex == 3:
+                objRight = objThickSide
+            elif iColumnIndex >= 4:
+                if (iColumnIndex - 4) % 2 == 0:
+                    objLeft = objThickSide
+                    objRight = objSolidSide
+                else:
+                    objLeft = objSolidSide
+                    objRight = objThickSide
+
+            if iColumnIndex == iLastColumn:
+                objRight = objThickSide
+
+            set_border(
+                iRowIndex,
+                iColumnIndex,
+                objLeft=objLeft,
+                objRight=objRight,
+                objTop=objTop,
+                objBottom=objBottom,
+            )
+
+
+def _clear_sheet_borders_below_last_row(
+    objSheet,
+    iStartRow: int,
+    iLastColumn: int,
+) -> None:
+    if iStartRow <= 0 or iLastColumn <= 0:
+        return
+
+    iSheetMaxRow: int = objSheet.max_row
+    if iStartRow > iSheetMaxRow:
+        return
+
+    for iRowIndex in range(iStartRow, iSheetMaxRow + 1):
+        for iColumnIndex in range(1, iLastColumn + 1):
+            objCell = objSheet.cell(row=iRowIndex, column=iColumnIndex)
+            objCell.border = Border()
 
 
 def create_pj_summary_sales_cost_sg_admin_margin_excel(pszDirectory: str) -> Optional[str]:
@@ -5884,6 +6127,7 @@ def create_pj_summary_sales_cost_sg_admin_margin_excel(pszDirectory: str) -> Opt
             objSheet.title = objSheetNameMatch.group(1)
         objRows = read_tsv_rows(os.path.join(pszDirectory, pszInputName))
         iFormatRowIndex: int = 2 if objSheet.max_row >= 2 else 1
+        iLastColumn: int = max((len(objRow) for objRow in objRows), default=0)
         for iRowIndex, objRow in enumerate(objRows, start=1):
             for iColumnIndex, pszValue in enumerate(objRow, start=1):
                 objCellValue = parse_tsv_value_for_excel(pszValue)
@@ -5896,6 +6140,16 @@ def create_pj_summary_sales_cost_sg_admin_margin_excel(pszDirectory: str) -> Opt
                     objFormatCell = objSheet.cell(row=iFormatRowIndex, column=iColumnIndex)
                     if objFormatCell.number_format:
                         objCell.number_format = objFormatCell.number_format
+        _apply_pj_summary_sales_cost_sg_admin_margin_borders(
+            objSheet,
+            len(objRows),
+            iLastColumn,
+        )
+        _clear_sheet_borders_below_last_row(
+            objSheet,
+            len(objRows) + 1,
+            max(iLastColumn, objSheet.max_column),
+        )
     pszTargetDirectory: str = os.path.join(pszDirectory, "PJサマリ")
     os.makedirs(pszTargetDirectory, exist_ok=True)
     pszOutputPath: str = os.path.join(
@@ -5983,6 +6237,139 @@ def create_pj_summary_pl_cr_manhour_excel(
     return pszOutputPath
 
 
+def _apply_step0010_income_statement_borders(
+    objSheet,
+    iLastRow: int,
+    iLastColumn: int,
+) -> None:
+    if iLastRow <= 0 or iLastColumn <= 0:
+        return
+
+    objThickSide = Side(style="medium", color="000000")
+    objSolidSide = Side(style="thin", color="000000")
+    objDottedSide = Side(style="dotted")
+
+    def set_border(
+        iRowIndex: int,
+        iColumnIndex: int,
+        objLeft: Optional[Side] = None,
+        objRight: Optional[Side] = None,
+        objTop: Optional[Side] = None,
+        objBottom: Optional[Side] = None,
+    ) -> None:
+        objCell = objSheet.cell(row=iRowIndex, column=iColumnIndex)
+        objBorder = copy(objCell.border)
+        if objLeft is not None:
+            objBorder.left = objLeft
+        if objRight is not None:
+            objBorder.right = objRight
+        if objTop is not None:
+            objBorder.top = objTop
+        if objBottom is not None:
+            objBorder.bottom = objBottom
+        objCell.border = Border(
+            left=objBorder.left,
+            right=objBorder.right,
+            top=objBorder.top,
+            bottom=objBorder.bottom,
+            diagonal=objBorder.diagonal,
+            diagonal_direction=objBorder.diagonal_direction,
+            outline=objBorder.outline,
+            vertical=objBorder.vertical,
+            horizontal=objBorder.horizontal,
+        )
+
+    for iRowIndex in range(1, iLastRow + 1):
+        for iColumnIndex in range(1, iLastColumn + 1):
+            objLeft: Optional[Side] = None
+            objRight: Optional[Side] = None
+            objTop: Optional[Side] = None
+            objBottom: Optional[Side] = None
+
+            if iColumnIndex == 1:
+                objLeft = objThickSide
+            else:
+                objLeft = objSolidSide
+
+            if iColumnIndex < iLastColumn:
+                objRight = objSolidSide
+
+            if iRowIndex == 1:
+                objBottom = objThickSide
+                objTop = objThickSide
+            elif iRowIndex < iLastRow:
+                objBottom = objDottedSide
+            else:
+                objBottom = objThickSide
+
+            set_border(
+                iRowIndex,
+                iColumnIndex,
+                objLeft=objLeft,
+                objRight=objRight,
+                objTop=objTop,
+                objBottom=objBottom,
+            )
+
+
+def _clear_step0010_income_statement_borders_outside_data(
+    objSheet,
+    iLastRow: int,
+    iLastColumn: int,
+) -> None:
+    iSheetMaxRow: int = objSheet.max_row
+    iSheetMaxColumn: int = objSheet.max_column
+
+    if iLastRow > 0 and iLastColumn > 0:
+        for iRowIndex in range(1, min(iLastRow, iSheetMaxRow) + 1):
+            for iColumnIndex in range(iLastColumn + 1, iSheetMaxColumn + 1):
+                objSheet.cell(row=iRowIndex, column=iColumnIndex).border = Border()
+
+    if iLastRow < iSheetMaxRow:
+        for iRowIndex in range(max(iLastRow + 1, 1), iSheetMaxRow + 1):
+            for iColumnIndex in range(1, iSheetMaxColumn + 1):
+                objSheet.cell(row=iRowIndex, column=iColumnIndex).border = Border()
+
+
+def _normalize_step0010_manhour_label_fonts(
+    objSheet,
+    iLastRow: int,
+) -> None:
+    if iLastRow <= 0:
+        return
+
+    objTargetNames: List[str] = [
+        "1Cカンパニー販管費の工数",
+        "2Cカンパニー販管費の工数",
+    ]
+    objSourceNamePriority: List[str] = [
+        "3Cカンパニー販管費の工数",
+        "4Cカンパニー販管費の工数",
+        "事業開発カンパニー販管費の工数",
+    ]
+
+    objNameToRowIndex: Dict[str, int] = {}
+    for iRowIndex in range(1, iLastRow + 1):
+        pszLabel = str(objSheet.cell(row=iRowIndex, column=1).value or "")
+        if pszLabel:
+            objNameToRowIndex[pszLabel] = iRowIndex
+
+    iSourceRowIndex: Optional[int] = None
+    for pszSourceName in objSourceNamePriority:
+        if pszSourceName in objNameToRowIndex:
+            iSourceRowIndex = objNameToRowIndex[pszSourceName]
+            break
+    if iSourceRowIndex is None:
+        return
+
+    objSourceFont = copy(objSheet.cell(row=iSourceRowIndex, column=1).font)
+    for pszTargetName in objTargetNames:
+        iTargetRowIndex = objNameToRowIndex.get(pszTargetName)
+        if iTargetRowIndex is None:
+            continue
+        objSheet.cell(row=iTargetRowIndex, column=1).font = copy(objSourceFont)
+
+
 def create_step0010_pj_income_statement_excel_from_tsv(
     pszStep0010Path: str,
 ) -> Optional[str]:
@@ -6009,11 +6396,21 @@ def create_step0010_pj_income_statement_excel_from_tsv(
 
     objWorkbook = load_workbook(pszTemplatePath)
     objSheet = objWorkbook.worksheets[0]
+    objSheet.title = pszYearMonth
     objRows = read_tsv_rows(pszStep0010Path)
+    iLastColumn: int = max((len(objRow) for objRow in objRows), default=0)
     for iRowIndex, objRow in enumerate(objRows, start=1):
         for iColumnIndex, pszValue in enumerate(objRow, start=1):
             objCellValue = parse_tsv_value_for_excel(pszValue)
             objSheet.cell(row=iRowIndex, column=iColumnIndex, value=objCellValue)
+
+    _apply_step0010_income_statement_borders(objSheet, len(objRows), iLastColumn)
+    _clear_step0010_income_statement_borders_outside_data(
+        objSheet,
+        len(objRows),
+        iLastColumn,
+    )
+    _normalize_step0010_manhour_label_fonts(objSheet, len(objRows))
 
     pszOutputPath: str = os.path.join(
         os.path.dirname(pszStep0010Path),
@@ -6056,11 +6453,21 @@ def create_step0010_pj_income_statement_vertical_excel_from_tsv(
 
     objWorkbook = load_workbook(pszTemplatePath)
     objSheet = objWorkbook.worksheets[0]
+    objSheet.title = f"{pszYearMonth}_vertical"
     objRows = read_tsv_rows(pszStep0010VerticalPath)
+    iLastColumn: int = max((len(objRow) for objRow in objRows), default=0)
     for iRowIndex, objRow in enumerate(objRows, start=1):
         for iColumnIndex, pszValue in enumerate(objRow, start=1):
             objCellValue = parse_tsv_value_for_excel(pszValue)
             objSheet.cell(row=iRowIndex, column=iColumnIndex, value=objCellValue)
+
+    _apply_step0010_income_statement_borders(objSheet, len(objRows), iLastColumn)
+    _clear_step0010_income_statement_borders_outside_data(
+        objSheet,
+        len(objRows),
+        iLastColumn,
+    )
+    _normalize_step0010_manhour_label_fonts(objSheet, len(objRows))
 
     pszOutputPath: str = os.path.join(
         os.path.dirname(pszStep0010VerticalPath),
@@ -6077,8 +6484,98 @@ def create_step0010_pj_income_statement_vertical_excel_from_tsv(
     return pszOutputPath
 
 
+def create_step0010_pj_income_statement_range_excel_from_tsvs(
+    pszDirectory: str,
+    objMonthlyPaths: List[str],
+    bVertical: bool,
+) -> Optional[str]:
+    if not objMonthlyPaths:
+        return None
+
+    objPathPairs: List[Tuple[Tuple[int, int], str]] = []
+    pszPattern = (
+        r"損益計算書_販管費配賦_step0010_(\d{4})年(\d{2})月_A∪B_プロジェクト名_C∪D_vertical\.tsv"
+        if bVertical
+        else r"損益計算書_販管費配賦_step0010_(\d{4})年(\d{2})月_A∪B_プロジェクト名_C∪D\.tsv"
+    )
+    for pszPath in objMonthlyPaths:
+        pszName: str = os.path.basename(pszPath)
+        objMatch = re.fullmatch(pszPattern, pszName)
+        if objMatch is None:
+            continue
+        iYear: int = int(objMatch.group(1))
+        iMonth: int = int(objMatch.group(2))
+        objPathPairs.append(((iYear, iMonth), pszPath))
+
+    if not objPathPairs:
+        return None
+
+    objPathPairs.sort(key=lambda objItem: objItem[0])
+    objStart = objPathPairs[0][0]
+    objEnd = objPathPairs[-1][0]
+    pszStartLabel: str = f"{objStart[0]}年{objStart[1]:02d}月"
+    pszEndLabel: str = f"{objEnd[0]}年{objEnd[1]:02d}月"
+
+    pszScriptDirectory: str = os.path.dirname(__file__)
+    pszTemplateName: str = (
+        "TEMPLATE_販管費配賦後_損益計算書_YYYY年MM月_A∪B_プロジェクト名_C∪D_vertical.xlsx"
+        if bVertical
+        else "TEMPLATE_販管費配賦後_損益計算書_YYYY年MM月_A∪B_プロジェクト名_C∪D.xlsx"
+    )
+    pszTemplatePath: str = os.path.join(pszScriptDirectory, pszTemplateName)
+    if not os.path.isfile(pszTemplatePath):
+        return None
+
+    objWorkbook = load_workbook(pszTemplatePath)
+    objTemplateSheet = objWorkbook.worksheets[0]
+
+    for iIndex, (objYearMonth, pszPath) in enumerate(objPathPairs):
+        pszSheetName: str = f"{objYearMonth[0]}年{objYearMonth[1]:02d}月"
+        if bVertical:
+            pszSheetName = f"{pszSheetName}_vertical"
+
+        if iIndex == 0:
+            objSheet = objTemplateSheet
+        else:
+            objSheet = objWorkbook.copy_worksheet(objTemplateSheet)
+        objSheet.title = pszSheetName
+
+        objRows = read_tsv_rows(pszPath)
+        iLastColumn: int = max((len(objRow) for objRow in objRows), default=0)
+        for iRowIndex, objRow in enumerate(objRows, start=1):
+            for iColumnIndex, pszValue in enumerate(objRow, start=1):
+                objCellValue = parse_tsv_value_for_excel(pszValue)
+                objSheet.cell(row=iRowIndex, column=iColumnIndex, value=objCellValue)
+
+        _apply_step0010_income_statement_borders(objSheet, len(objRows), iLastColumn)
+        _clear_step0010_income_statement_borders_outside_data(
+            objSheet,
+            len(objRows),
+            iLastColumn,
+        )
+        _normalize_step0010_manhour_label_fonts(objSheet, len(objRows))
+
+    pszOutputName: str = (
+        f"販管費配賦後_損益計算書_{pszStartLabel}-{pszEndLabel}_A∪B_プロジェクト名_C∪D_vertical.xlsx"
+        if bVertical
+        else f"販管費配賦後_損益計算書_{pszStartLabel}-{pszEndLabel}_A∪B_プロジェクト名_C∪D.xlsx"
+    )
+    pszOutputPath: str = os.path.join(pszDirectory, pszOutputName)
+    objWorkbook.save(pszOutputPath)
+    if EXECUTION_ROOT_DIRECTORY:
+        pszTargetDirectory = os.path.join(EXECUTION_ROOT_DIRECTORY, "PJ別損益計算書")
+        os.makedirs(pszTargetDirectory, exist_ok=True)
+        shutil.copy2(
+            pszOutputPath,
+            os.path.join(pszTargetDirectory, os.path.basename(pszOutputPath)),
+        )
+    return pszOutputPath
+
+
 def create_step0010_pj_income_statement_excels(pszDirectory: str) -> List[str]:
     objOutputs: List[str] = []
+    objMonthlyNormalPaths: List[str] = []
+    objMonthlyVerticalPaths: List[str] = []
     for pszName in sorted(os.listdir(pszDirectory)):
         pszPath = os.path.join(pszDirectory, pszName)
         if not os.path.isfile(pszPath):
@@ -6087,6 +6584,7 @@ def create_step0010_pj_income_statement_excels(pszDirectory: str) -> List[str]:
             r"損益計算書_販管費配賦_step0010_\d{4}年\d{2}月_A∪B_プロジェクト名_C∪D\.tsv",
             pszName,
         ) is not None:
+            objMonthlyNormalPaths.append(pszPath)
             pszOutput = create_step0010_pj_income_statement_excel_from_tsv(pszPath)
             if pszOutput is not None:
                 objOutputs.append(pszOutput)
@@ -6095,9 +6593,27 @@ def create_step0010_pj_income_statement_excels(pszDirectory: str) -> List[str]:
             r"損益計算書_販管費配賦_step0010_\d{4}年\d{2}月_A∪B_プロジェクト名_C∪D_vertical\.tsv",
             pszName,
         ) is not None:
+            objMonthlyVerticalPaths.append(pszPath)
             pszOutput = create_step0010_pj_income_statement_vertical_excel_from_tsv(pszPath)
             if pszOutput is not None:
                 objOutputs.append(pszOutput)
+
+    pszRangeOutput = create_step0010_pj_income_statement_range_excel_from_tsvs(
+        pszDirectory,
+        objMonthlyNormalPaths,
+        False,
+    )
+    if pszRangeOutput is not None:
+        objOutputs.append(pszRangeOutput)
+
+    pszRangeVerticalOutput = create_step0010_pj_income_statement_range_excel_from_tsvs(
+        pszDirectory,
+        objMonthlyVerticalPaths,
+        True,
+    )
+    if pszRangeVerticalOutput is not None:
+        objOutputs.append(pszRangeVerticalOutput)
+
     return objOutputs
 
 
@@ -6134,6 +6650,7 @@ def build_step0007_rows_for_cp(
     pszPriorLabel: str,
     pszCurrentLabel: str,
     pszPriorRowLabel: str,
+    pszPrefix: str,
 ) -> List[List[str]]:
     if not objRows:
         return []
@@ -6235,7 +6752,207 @@ def build_step0007_rows_for_cp(
                 objRow[4] = "－∞"
             continue
         objRow[4] = "{0:.4f}".format(fActualValueForYoY / fPriorValueDenominator)
+    apply_cp_company_plan_values(objInsertedRows, pszCurrentLabel, pszPrefix)
     return objInsertedRows
+
+
+CP_COMPANY_ALLOWED_NAMES: List[str] = [
+    "第一インキュ",
+    "第二インキュ",
+    "第三インキュ",
+    "第四インキュ",
+    "事業開発",
+    "子会社",
+    "投資先",
+    "本部",
+    "合計",
+]
+
+
+def parse_japanese_year_month_label(pszLabel: str) -> Optional[Tuple[int, int]]:
+    objMatch = re.match(r"^(\d{4})年(\d{1,2})月$", (pszLabel or "").strip())
+    if objMatch is None:
+        return None
+    iYear: int = int(objMatch.group(1))
+    iMonth: int = int(objMatch.group(2))
+    if iMonth < 1 or iMonth > 12:
+        return None
+    return iYear, iMonth
+
+
+def parse_current_period_months_for_cp(pszCurrentLabel: str) -> List[Tuple[int, int]]:
+    objSingle = parse_japanese_year_month_label(pszCurrentLabel)
+    if objSingle is not None:
+        return [objSingle]
+    objRangeMatch = re.match(
+        r"^(\d{4})年(\d{2})月-(\d{4})年(\d{2})月$",
+        (pszCurrentLabel or "").strip(),
+    )
+    if objRangeMatch is None:
+        return []
+    iStartYear: int = int(objRangeMatch.group(1))
+    iStartMonth: int = int(objRangeMatch.group(2))
+    iEndYear: int = int(objRangeMatch.group(3))
+    iEndMonth: int = int(objRangeMatch.group(4))
+    return build_month_sequence((iStartYear, iStartMonth), (iEndYear, iEndMonth))
+
+
+def parse_plan_numeric_value(pszValue: str) -> Optional[float]:
+    pszText: str = (pszValue or "").strip()
+    if pszText == "":
+        return None
+    pszNormalized: str = pszText.replace(",", "")
+    if pszNormalized.endswith("%"):
+        pszNormalized = pszNormalized[:-1]
+    if pszNormalized == "":
+        return None
+    try:
+        return float(pszNormalized)
+    except ValueError:
+        return None
+
+
+CP_COMPANY_PLAN_CACHE: Optional[Dict[Tuple[str, str], Dict[Tuple[int, int], str]]] = None
+
+
+def read_cp_company_plan_map() -> Dict[Tuple[str, str], Dict[Tuple[int, int], str]]:
+    global CP_COMPANY_PLAN_CACHE
+    if CP_COMPANY_PLAN_CACHE is not None:
+        return CP_COMPANY_PLAN_CACHE
+    pszPlanPath: str = os.path.join(get_script_base_directory(), "計画.csv")
+    if not os.path.isfile(pszPlanPath):
+        CP_COMPANY_PLAN_CACHE = {}
+        return CP_COMPANY_PLAN_CACHE
+
+    objRows: List[List[str]] = []
+    with open(pszPlanPath, "r", encoding="utf-8-sig", newline="") as objFile:
+        objSniffer = csv.Sniffer()
+        pszSample: str = objFile.read(4096)
+        objFile.seek(0)
+        try:
+            objDialect = objSniffer.sniff(pszSample, delimiters=",\t")
+            pszDelimiter = objDialect.delimiter
+        except csv.Error:
+            pszDelimiter = "\t"
+        objReader = csv.reader(objFile, delimiter=pszDelimiter)
+        for objRow in objReader:
+            objRows.append(list(objRow))
+
+    if not objRows:
+        CP_COMPANY_PLAN_CACHE = {}
+        return CP_COMPANY_PLAN_CACHE
+
+    objMonthColumns: Dict[int, Tuple[int, int]] = {}
+    for iColumnIndex, pszLabel in enumerate(objRows[0]):
+        objMonth = parse_japanese_year_month_label(pszLabel)
+        if objMonth is not None:
+            objMonthColumns[iColumnIndex] = objMonth
+
+    objAllowedCompanySet = set(CP_COMPANY_ALLOWED_NAMES)
+    objGroupStartNames = {
+        "受託事業-施設運営",
+        "受託事業-その他",
+        "自社-施設運営",
+        "自社-その他",
+    }
+    pszCurrentCompany: str = ""
+    objPlanMap: Dict[Tuple[str, str], Dict[Tuple[int, int], str]] = {}
+
+    for objRow in objRows[1:]:
+        pszCompanyCell: str = objRow[0].strip() if len(objRow) > 0 else ""
+        if pszCompanyCell in objGroupStartNames:
+            break
+        if pszCompanyCell != "":
+            pszCurrentCompany = pszCompanyCell
+        if pszCurrentCompany not in objAllowedCompanySet:
+            continue
+        pszSubject: str = objRow[1].strip() if len(objRow) > 1 else ""
+        if pszSubject == "":
+            continue
+        objKey = (pszCurrentCompany, pszSubject)
+        objMonthMap: Dict[Tuple[int, int], str] = objPlanMap.setdefault(objKey, {})
+        for iColumnIndex, objMonth in objMonthColumns.items():
+            if iColumnIndex >= len(objRow):
+                continue
+            objMonthMap[objMonth] = (objRow[iColumnIndex] or "").strip()
+
+    CP_COMPANY_PLAN_CACHE = objPlanMap
+    return CP_COMPANY_PLAN_CACHE
+
+
+def apply_cp_company_plan_values(
+    objInsertedRows: List[List[str]],
+    pszCurrentLabel: str,
+    pszPrefix: str,
+) -> None:
+    if pszPrefix != "0001_CP別":
+        return
+    if len(objInsertedRows) < 3:
+        return
+    pszCompany: str = (objInsertedRows[0][0] if objInsertedRows[0] else "").strip()
+    if pszCompany not in set(CP_COMPANY_ALLOWED_NAMES):
+        return
+    objMonths: List[Tuple[int, int]] = parse_current_period_months_for_cp(pszCurrentLabel)
+    if not objMonths:
+        return
+    objPlanMap = read_cp_company_plan_map()
+    if not objPlanMap:
+        return
+
+    def get_monthly_plan_values(pszSubject: str) -> List[str]:
+        objMonthMap = objPlanMap.get((pszCompany, pszSubject), {})
+        return [objMonthMap.get(objMonth, "") for objMonth in objMonths]
+
+    def compute_sum_value_text(pszSubject: str) -> str:
+        objValues: List[str] = get_monthly_plan_values(pszSubject)
+        fTotal: float = 0.0
+        bHasNumeric: bool = False
+        for pszValue in objValues:
+            fParsed = parse_plan_numeric_value(pszValue)
+            if fParsed is None:
+                continue
+            bHasNumeric = True
+            fTotal += fParsed
+        if not bHasNumeric:
+            return ""
+        if abs(fTotal - round(fTotal)) < 0.0000001:
+            return str(int(round(fTotal)))
+        return ("{0:.10f}".format(fTotal)).rstrip("0").rstrip(".")
+
+    def compute_sum_numeric(pszSubject: str) -> Optional[float]:
+        pszText = compute_sum_value_text(pszSubject)
+        return parse_plan_numeric_value(pszText)
+
+    bIsRange: bool = len(objMonths) > 1
+    fSalesTotal: Optional[float] = None
+    fGrossTotal: Optional[float] = None
+    fOperatingTotal: Optional[float] = None
+    if bIsRange:
+        fSalesTotal = compute_sum_numeric("純売上高")
+        fGrossTotal = compute_sum_numeric("売上総利益")
+        fOperatingTotal = compute_sum_numeric("営業利益")
+
+    for objRow in objInsertedRows[2:]:
+        pszSubject: str = (objRow[0] if objRow else "").strip()
+        if pszSubject == "":
+            continue
+        if bIsRange and pszSubject == "売上総利益率":
+            if fSalesTotal is None or abs(fSalesTotal) < 0.0000001 or fGrossTotal is None:
+                objRow[2] = ""
+            else:
+                objRow[2] = "{0:.2f}%".format((fGrossTotal / fSalesTotal) * 100.0)
+            continue
+        if bIsRange and pszSubject == "営業利益率":
+            if fSalesTotal is None or abs(fSalesTotal) < 0.0000001 or fOperatingTotal is None:
+                objRow[2] = ""
+            else:
+                objRow[2] = "{0:.2f}%".format((fOperatingTotal / fSalesTotal) * 100.0)
+            continue
+        if bIsRange:
+            objRow[2] = compute_sum_value_text(pszSubject)
+            continue
+        objValues: List[str] = get_monthly_plan_values(pszSubject)
+        objRow[2] = objValues[0] if objValues else ""
 
 
 def parse_period_month_count(pszLabel: str) -> int:
@@ -7048,6 +7765,7 @@ def create_cp_step0007_file_company(pszStep0006Path: str, pszPrefix: str) -> Non
         pszPriorLabel,
         pszCurrentLabel,
         pszPriorRowLabel,
+        pszPrefix,
     )
     write_tsv_rows(pszOutputPath, objOutputRows)
     pszTargetDirectory = os.path.join(get_script_base_directory(), f"{pszPrefix}_step0007")
