@@ -25,6 +25,7 @@ import os
 import shutil
 import re
 import sys
+import csv
 from datetime import datetime
 from copy import copy
 from decimal import Decimal, ROUND_HALF_UP
@@ -6649,6 +6650,7 @@ def build_step0007_rows_for_cp(
     pszPriorLabel: str,
     pszCurrentLabel: str,
     pszPriorRowLabel: str,
+    pszPrefix: str,
 ) -> List[List[str]]:
     if not objRows:
         return []
@@ -6750,7 +6752,207 @@ def build_step0007_rows_for_cp(
                 objRow[4] = "－∞"
             continue
         objRow[4] = "{0:.4f}".format(fActualValueForYoY / fPriorValueDenominator)
+    apply_cp_company_plan_values(objInsertedRows, pszCurrentLabel, pszPrefix)
     return objInsertedRows
+
+
+CP_COMPANY_ALLOWED_NAMES: List[str] = [
+    "第一インキュ",
+    "第二インキュ",
+    "第三インキュ",
+    "第四インキュ",
+    "事業開発",
+    "子会社",
+    "投資先",
+    "本部",
+    "合計",
+]
+
+
+def parse_japanese_year_month_label(pszLabel: str) -> Optional[Tuple[int, int]]:
+    objMatch = re.match(r"^(\d{4})年(\d{1,2})月$", (pszLabel or "").strip())
+    if objMatch is None:
+        return None
+    iYear: int = int(objMatch.group(1))
+    iMonth: int = int(objMatch.group(2))
+    if iMonth < 1 or iMonth > 12:
+        return None
+    return iYear, iMonth
+
+
+def parse_current_period_months_for_cp(pszCurrentLabel: str) -> List[Tuple[int, int]]:
+    objSingle = parse_japanese_year_month_label(pszCurrentLabel)
+    if objSingle is not None:
+        return [objSingle]
+    objRangeMatch = re.match(
+        r"^(\d{4})年(\d{2})月-(\d{4})年(\d{2})月$",
+        (pszCurrentLabel or "").strip(),
+    )
+    if objRangeMatch is None:
+        return []
+    iStartYear: int = int(objRangeMatch.group(1))
+    iStartMonth: int = int(objRangeMatch.group(2))
+    iEndYear: int = int(objRangeMatch.group(3))
+    iEndMonth: int = int(objRangeMatch.group(4))
+    return build_month_sequence((iStartYear, iStartMonth), (iEndYear, iEndMonth))
+
+
+def parse_plan_numeric_value(pszValue: str) -> Optional[float]:
+    pszText: str = (pszValue or "").strip()
+    if pszText == "":
+        return None
+    pszNormalized: str = pszText.replace(",", "")
+    if pszNormalized.endswith("%"):
+        pszNormalized = pszNormalized[:-1]
+    if pszNormalized == "":
+        return None
+    try:
+        return float(pszNormalized)
+    except ValueError:
+        return None
+
+
+CP_COMPANY_PLAN_CACHE: Optional[Dict[Tuple[str, str], Dict[Tuple[int, int], str]]] = None
+
+
+def read_cp_company_plan_map() -> Dict[Tuple[str, str], Dict[Tuple[int, int], str]]:
+    global CP_COMPANY_PLAN_CACHE
+    if CP_COMPANY_PLAN_CACHE is not None:
+        return CP_COMPANY_PLAN_CACHE
+    pszPlanPath: str = os.path.join(get_script_base_directory(), "計画.csv")
+    if not os.path.isfile(pszPlanPath):
+        CP_COMPANY_PLAN_CACHE = {}
+        return CP_COMPANY_PLAN_CACHE
+
+    objRows: List[List[str]] = []
+    with open(pszPlanPath, "r", encoding="utf-8-sig", newline="") as objFile:
+        objSniffer = csv.Sniffer()
+        pszSample: str = objFile.read(4096)
+        objFile.seek(0)
+        try:
+            objDialect = objSniffer.sniff(pszSample, delimiters=",\t")
+            pszDelimiter = objDialect.delimiter
+        except csv.Error:
+            pszDelimiter = "\t"
+        objReader = csv.reader(objFile, delimiter=pszDelimiter)
+        for objRow in objReader:
+            objRows.append(list(objRow))
+
+    if not objRows:
+        CP_COMPANY_PLAN_CACHE = {}
+        return CP_COMPANY_PLAN_CACHE
+
+    objMonthColumns: Dict[int, Tuple[int, int]] = {}
+    for iColumnIndex, pszLabel in enumerate(objRows[0]):
+        objMonth = parse_japanese_year_month_label(pszLabel)
+        if objMonth is not None:
+            objMonthColumns[iColumnIndex] = objMonth
+
+    objAllowedCompanySet = set(CP_COMPANY_ALLOWED_NAMES)
+    objGroupStartNames = {
+        "受託事業-施設運営",
+        "受託事業-その他",
+        "自社-施設運営",
+        "自社-その他",
+    }
+    pszCurrentCompany: str = ""
+    objPlanMap: Dict[Tuple[str, str], Dict[Tuple[int, int], str]] = {}
+
+    for objRow in objRows[1:]:
+        pszCompanyCell: str = objRow[0].strip() if len(objRow) > 0 else ""
+        if pszCompanyCell in objGroupStartNames:
+            break
+        if pszCompanyCell != "":
+            pszCurrentCompany = pszCompanyCell
+        if pszCurrentCompany not in objAllowedCompanySet:
+            continue
+        pszSubject: str = objRow[1].strip() if len(objRow) > 1 else ""
+        if pszSubject == "":
+            continue
+        objKey = (pszCurrentCompany, pszSubject)
+        objMonthMap: Dict[Tuple[int, int], str] = objPlanMap.setdefault(objKey, {})
+        for iColumnIndex, objMonth in objMonthColumns.items():
+            if iColumnIndex >= len(objRow):
+                continue
+            objMonthMap[objMonth] = (objRow[iColumnIndex] or "").strip()
+
+    CP_COMPANY_PLAN_CACHE = objPlanMap
+    return CP_COMPANY_PLAN_CACHE
+
+
+def apply_cp_company_plan_values(
+    objInsertedRows: List[List[str]],
+    pszCurrentLabel: str,
+    pszPrefix: str,
+) -> None:
+    if pszPrefix != "0001_CP別":
+        return
+    if len(objInsertedRows) < 3:
+        return
+    pszCompany: str = (objInsertedRows[0][0] if objInsertedRows[0] else "").strip()
+    if pszCompany not in set(CP_COMPANY_ALLOWED_NAMES):
+        return
+    objMonths: List[Tuple[int, int]] = parse_current_period_months_for_cp(pszCurrentLabel)
+    if not objMonths:
+        return
+    objPlanMap = read_cp_company_plan_map()
+    if not objPlanMap:
+        return
+
+    def get_monthly_plan_values(pszSubject: str) -> List[str]:
+        objMonthMap = objPlanMap.get((pszCompany, pszSubject), {})
+        return [objMonthMap.get(objMonth, "") for objMonth in objMonths]
+
+    def compute_sum_value_text(pszSubject: str) -> str:
+        objValues: List[str] = get_monthly_plan_values(pszSubject)
+        fTotal: float = 0.0
+        bHasNumeric: bool = False
+        for pszValue in objValues:
+            fParsed = parse_plan_numeric_value(pszValue)
+            if fParsed is None:
+                continue
+            bHasNumeric = True
+            fTotal += fParsed
+        if not bHasNumeric:
+            return ""
+        if abs(fTotal - round(fTotal)) < 0.0000001:
+            return str(int(round(fTotal)))
+        return ("{0:.10f}".format(fTotal)).rstrip("0").rstrip(".")
+
+    def compute_sum_numeric(pszSubject: str) -> Optional[float]:
+        pszText = compute_sum_value_text(pszSubject)
+        return parse_plan_numeric_value(pszText)
+
+    bIsRange: bool = len(objMonths) > 1
+    fSalesTotal: Optional[float] = None
+    fGrossTotal: Optional[float] = None
+    fOperatingTotal: Optional[float] = None
+    if bIsRange:
+        fSalesTotal = compute_sum_numeric("純売上高")
+        fGrossTotal = compute_sum_numeric("売上総利益")
+        fOperatingTotal = compute_sum_numeric("営業利益")
+
+    for objRow in objInsertedRows[2:]:
+        pszSubject: str = (objRow[0] if objRow else "").strip()
+        if pszSubject == "":
+            continue
+        if bIsRange and pszSubject == "売上総利益率":
+            if fSalesTotal is None or abs(fSalesTotal) < 0.0000001 or fGrossTotal is None:
+                objRow[2] = ""
+            else:
+                objRow[2] = "{0:.2f}%".format((fGrossTotal / fSalesTotal) * 100.0)
+            continue
+        if bIsRange and pszSubject == "営業利益率":
+            if fSalesTotal is None or abs(fSalesTotal) < 0.0000001 or fOperatingTotal is None:
+                objRow[2] = ""
+            else:
+                objRow[2] = "{0:.2f}%".format((fOperatingTotal / fSalesTotal) * 100.0)
+            continue
+        if bIsRange:
+            objRow[2] = compute_sum_value_text(pszSubject)
+            continue
+        objValues: List[str] = get_monthly_plan_values(pszSubject)
+        objRow[2] = objValues[0] if objValues else ""
 
 
 def parse_period_month_count(pszLabel: str) -> int:
@@ -7563,6 +7765,7 @@ def create_cp_step0007_file_company(pszStep0006Path: str, pszPrefix: str) -> Non
         pszPriorLabel,
         pszCurrentLabel,
         pszPriorRowLabel,
+        pszPrefix,
     )
     write_tsv_rows(pszOutputPath, objOutputRows)
     pszTargetDirectory = os.path.join(get_script_base_directory(), f"{pszPrefix}_step0007")
