@@ -6753,6 +6753,24 @@ def build_step0007_rows_for_cp(
             continue
         objRow[4] = "{0:.4f}".format(fActualValueForYoY / fPriorValueDenominator)
     apply_cp_company_plan_values(objInsertedRows, pszCurrentLabel, pszPrefix)
+
+    for objRow in objInsertedRows[2:]:
+        pszPlanValue: str = objRow[2] if len(objRow) > 2 else ""
+        pszActualValue: str = objRow[3] if len(objRow) > 3 else ""
+        fPlanValue = parse_plan_numeric_value(pszPlanValue)
+        fActualValue = parse_plan_numeric_value(pszActualValue)
+        if fPlanValue is None or fActualValue is None:
+            continue
+        if abs(fPlanValue) < 0.0000001:
+            if fActualValue > 0:
+                objRow[5] = "＋∞"
+            elif fActualValue < 0:
+                objRow[5] = "－∞"
+            else:
+                objRow[5] = ""
+            continue
+        objRow[5] = "{0:.4f}".format(fActualValue / fPlanValue)
+
     return objInsertedRows
 
 
