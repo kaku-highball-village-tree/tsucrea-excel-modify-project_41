@@ -6940,13 +6940,13 @@ def apply_cp_company_plan_values(
             if fSalesTotal is None or abs(fSalesTotal) < 0.0000001 or fGrossTotal is None:
                 objRow[2] = ""
             else:
-                objRow[2] = "{0:.2f}%".format((fGrossTotal / fSalesTotal) * 100.0)
+                objRow[2] = "{0:.2f}".format((fGrossTotal / fSalesTotal) * 100.0)
             continue
         if bIsRange and pszSubject == "営業利益率":
             if fSalesTotal is None or abs(fSalesTotal) < 0.0000001 or fOperatingTotal is None:
                 objRow[2] = ""
             else:
-                objRow[2] = "{0:.2f}%".format((fOperatingTotal / fSalesTotal) * 100.0)
+                objRow[2] = "{0:.2f}".format((fOperatingTotal / fSalesTotal) * 100.0)
             continue
         if bIsRange:
             objRow[2] = compute_sum_value_text(pszSubject)
