@@ -5548,11 +5548,7 @@ def create_cumulative_reports(pszPlPath: str) -> None:
         create_pj_summary(
             pszPlPath,
             objRangeItem,
-            create_step0007=objRangeItem
-            in (
-                (objFiscalARanges[-1] if objFiscalARanges else None),
-                (objFiscalBRanges[-1] if objFiscalBRanges else None),
-            ),
+            create_step0007=True,
         )
     objMonths = build_month_sequence(objStart, objEnd)
     for objMonth in objMonths:
