@@ -5578,16 +5578,6 @@ def create_cumulative_reports(pszPlPath: str) -> None:
                     break
                 objCandidateStart = next_month(objCandidateStart)
 
-    for objRangeItem in list(objAllRanges):
-        objPriorRange = build_prior_range_for_cumulative(objRangeItem[0], objRangeItem[1])
-        if objPriorRange is None:
-            continue
-        if (
-            is_month_in_range(objPriorRange[0], objRange)
-            and is_month_in_range(objPriorRange[1], objRange)
-        ):
-            append_unique_range(objPriorRange)
-
     for objRangeItem in objAllRanges:
         create_cumulative_report(
             pszDirectory,
@@ -7949,6 +7939,24 @@ def create_cp_step0007_file_company(pszStep0006Path: str, pszPrefix: str) -> Non
             (iStartYear, iStartMonth),
             (iEndYear, iEndMonth),
         )
+        if iStartMonth == 4 and iEndMonth <= 8:
+            objFiscalBPriorRange: Tuple[Tuple[int, int], Tuple[int, int]] = (
+                (iStartYear - 1, 9),
+                (iStartYear, 8),
+            )
+            pszFiscalBPriorLabel = (
+                f"{objFiscalBPriorRange[0][0]}年{objFiscalBPriorRange[0][1]:02d}月-"
+                f"{objFiscalBPriorRange[1][0]}年{objFiscalBPriorRange[1][1]:02d}月"
+            )
+            pszFiscalBPriorPath = os.path.join(
+                pszDirectory,
+                (
+                    f"{pszPrefix}_step0006_累計_損益計算書_"
+                    f"{pszFiscalBPriorLabel}_{pszCompany}_vertical.tsv"
+                ),
+            )
+            if os.path.isfile(pszFiscalBPriorPath):
+                objPriorRange = objFiscalBPriorRange
         if objPriorRange is not None:
             (iPriorStartYear, iPriorStartMonth), (iPriorEndYear, iPriorEndMonth) = objPriorRange
             pszPriorLabel = (
