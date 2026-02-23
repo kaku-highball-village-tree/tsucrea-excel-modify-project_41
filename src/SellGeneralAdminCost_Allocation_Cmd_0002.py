@@ -5520,22 +5520,63 @@ def create_cumulative_reports(pszPlPath: str) -> None:
     objStart, objEnd = objRange
     objFiscalARanges = split_by_fiscal_boundary(objStart, objEnd, 3)
     objFiscalBRanges = split_by_fiscal_boundary(objStart, objEnd, 8)
+    objDisplayRanges: List[Tuple[Tuple[int, int], Tuple[int, int]]] = []
     objAllRanges: List[Tuple[Tuple[int, int], Tuple[int, int]]] = []
 
     def append_unique_range(
-        objTargetRange: Tuple[Tuple[int, int], Tuple[int, int]]
+        objTargetRanges: List[Tuple[Tuple[int, int], Tuple[int, int]]],
+        objTargetRange: Tuple[Tuple[int, int], Tuple[int, int]],
     ) -> None:
-        if objTargetRange not in objAllRanges:
-            objAllRanges.append(objTargetRange)
+        if objTargetRange not in objTargetRanges:
+            objTargetRanges.append(objTargetRange)
+
+    def next_month(objMonth: Tuple[int, int]) -> Tuple[int, int]:
+        iYear, iMonth = objMonth
+        if iMonth >= 12:
+            return (iYear + 1, 1)
+        return (iYear, iMonth + 1)
 
     if objFiscalARanges:
         if len(objFiscalARanges) >= 2:
-            append_unique_range(objFiscalARanges[-2])
-        append_unique_range(objFiscalARanges[-1])
+            append_unique_range(objDisplayRanges, objFiscalARanges[-2])
+        append_unique_range(objDisplayRanges, objFiscalARanges[-1])
     if objFiscalBRanges:
         if len(objFiscalBRanges) >= 2:
-            append_unique_range(objFiscalBRanges[-2])
-        append_unique_range(objFiscalBRanges[-1])
+            append_unique_range(objDisplayRanges, objFiscalBRanges[-2])
+        append_unique_range(objDisplayRanges, objFiscalBRanges[-1])
+
+    for objRangeItem in objDisplayRanges:
+        append_unique_range(objAllRanges, objRangeItem)
+
+    for objRangeItem in objDisplayRanges:
+        objPriorRange = build_prior_range_for_cumulative(objRangeItem[0], objRangeItem[1])
+        if objPriorRange is None:
+            continue
+        if (
+            is_month_in_range(objPriorRange[0], objRange)
+            and is_month_in_range(objPriorRange[1], objRange)
+        ):
+            append_unique_range(objAllRanges, objPriorRange)
+
+    if objFiscalBRanges:
+        objFiscalBCurrentRange = objFiscalBRanges[-1]
+        (iCurrentStartYear, iCurrentStartMonth), _ = objFiscalBCurrentRange
+        if iCurrentStartMonth == 9:
+            objPriorFiscalStart: Tuple[int, int] = (iCurrentStartYear - 1, 9)
+            objPriorFiscalEnd: Tuple[int, int] = (iCurrentStartYear, 8)
+            objCandidateStart: Tuple[int, int] = objPriorFiscalStart
+            while True:
+                if (
+                    is_month_in_range(objCandidateStart, objRange)
+                    and is_month_in_range(objPriorFiscalEnd, objRange)
+                ):
+                    append_unique_range(
+                        objAllRanges,
+                        (objCandidateStart, objPriorFiscalEnd),
+                    )
+                if objCandidateStart == objPriorFiscalEnd:
+                    break
+                objCandidateStart = next_month(objCandidateStart)
 
     for objRangeItem in list(objAllRanges):
         objPriorRange = build_prior_range_for_cumulative(objRangeItem[0], objRangeItem[1])
@@ -5558,7 +5599,7 @@ def create_cumulative_reports(pszPlPath: str) -> None:
         create_pj_summary(
             pszPlPath,
             objRangeItem,
-            create_step0007=True,
+            create_step0007=(objRangeItem in objDisplayRanges),
         )
     objMonths = build_month_sequence(objStart, objEnd)
     for objMonth in objMonths:
