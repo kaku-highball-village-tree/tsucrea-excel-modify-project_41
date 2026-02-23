@@ -5578,6 +5578,16 @@ def create_cumulative_reports(pszPlPath: str) -> None:
                     break
                 objCandidateStart = next_month(objCandidateStart)
 
+    for objRangeItem in list(objAllRanges):
+        objPriorRange = build_prior_range_for_cumulative(objRangeItem[0], objRangeItem[1])
+        if objPriorRange is None:
+            continue
+        if (
+            is_month_in_range(objPriorRange[0], objRange)
+            and is_month_in_range(objPriorRange[1], objRange)
+        ):
+            append_unique_range(objPriorRange)
+
     for objRangeItem in objAllRanges:
         create_cumulative_report(
             pszDirectory,
