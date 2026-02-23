@@ -5520,22 +5520,63 @@ def create_cumulative_reports(pszPlPath: str) -> None:
     objStart, objEnd = objRange
     objFiscalARanges = split_by_fiscal_boundary(objStart, objEnd, 3)
     objFiscalBRanges = split_by_fiscal_boundary(objStart, objEnd, 8)
+    objDisplayRanges: List[Tuple[Tuple[int, int], Tuple[int, int]]] = []
     objAllRanges: List[Tuple[Tuple[int, int], Tuple[int, int]]] = []
 
     def append_unique_range(
-        objTargetRange: Tuple[Tuple[int, int], Tuple[int, int]]
+        objTargetRanges: List[Tuple[Tuple[int, int], Tuple[int, int]]],
+        objTargetRange: Tuple[Tuple[int, int], Tuple[int, int]],
     ) -> None:
-        if objTargetRange not in objAllRanges:
-            objAllRanges.append(objTargetRange)
+        if objTargetRange not in objTargetRanges:
+            objTargetRanges.append(objTargetRange)
+
+    def next_month(objMonth: Tuple[int, int]) -> Tuple[int, int]:
+        iYear, iMonth = objMonth
+        if iMonth >= 12:
+            return (iYear + 1, 1)
+        return (iYear, iMonth + 1)
 
     if objFiscalARanges:
         if len(objFiscalARanges) >= 2:
-            append_unique_range(objFiscalARanges[-2])
-        append_unique_range(objFiscalARanges[-1])
+            append_unique_range(objDisplayRanges, objFiscalARanges[-2])
+        append_unique_range(objDisplayRanges, objFiscalARanges[-1])
     if objFiscalBRanges:
         if len(objFiscalBRanges) >= 2:
-            append_unique_range(objFiscalBRanges[-2])
-        append_unique_range(objFiscalBRanges[-1])
+            append_unique_range(objDisplayRanges, objFiscalBRanges[-2])
+        append_unique_range(objDisplayRanges, objFiscalBRanges[-1])
+
+    for objRangeItem in objDisplayRanges:
+        append_unique_range(objAllRanges, objRangeItem)
+
+    for objRangeItem in objDisplayRanges:
+        objPriorRange = build_prior_range_for_cumulative(objRangeItem[0], objRangeItem[1])
+        if objPriorRange is None:
+            continue
+        if (
+            is_month_in_range(objPriorRange[0], objRange)
+            and is_month_in_range(objPriorRange[1], objRange)
+        ):
+            append_unique_range(objAllRanges, objPriorRange)
+
+    if objFiscalBRanges:
+        objFiscalBCurrentRange = objFiscalBRanges[-1]
+        (iCurrentStartYear, iCurrentStartMonth), _ = objFiscalBCurrentRange
+        if iCurrentStartMonth == 9:
+            objPriorFiscalStart: Tuple[int, int] = (iCurrentStartYear - 1, 9)
+            objPriorFiscalEnd: Tuple[int, int] = (iCurrentStartYear, 8)
+            objCandidateStart: Tuple[int, int] = objPriorFiscalStart
+            while True:
+                if (
+                    is_month_in_range(objCandidateStart, objRange)
+                    and is_month_in_range(objPriorFiscalEnd, objRange)
+                ):
+                    append_unique_range(
+                        objAllRanges,
+                        (objCandidateStart, objPriorFiscalEnd),
+                    )
+                if objCandidateStart == objPriorFiscalEnd:
+                    break
+                objCandidateStart = next_month(objCandidateStart)
 
     for objRangeItem in objAllRanges:
         create_cumulative_report(
@@ -5548,11 +5589,7 @@ def create_cumulative_reports(pszPlPath: str) -> None:
         create_pj_summary(
             pszPlPath,
             objRangeItem,
-            create_step0007=objRangeItem
-            in (
-                (objFiscalARanges[-1] if objFiscalARanges else None),
-                (objFiscalBRanges[-1] if objFiscalBRanges else None),
-            ),
+            create_step0007=(objRangeItem in objDisplayRanges),
         )
     objMonths = build_month_sequence(objStart, objEnd)
     for objMonth in objMonths:
@@ -6753,6 +6790,25 @@ def build_step0007_rows_for_cp(
             continue
         objRow[4] = "{0:.4f}".format(fActualValueForYoY / fPriorValueDenominator)
     apply_cp_company_plan_values(objInsertedRows, pszCurrentLabel, pszPrefix)
+    apply_cp_group_plan_values(objInsertedRows, pszCurrentLabel, pszPrefix)
+
+    for objRow in objInsertedRows[2:]:
+        pszPlanValue: str = objRow[2] if len(objRow) > 2 else ""
+        pszActualValue: str = objRow[3] if len(objRow) > 3 else ""
+        fPlanValue = parse_plan_numeric_value(pszPlanValue)
+        fActualValue = parse_plan_numeric_value(pszActualValue)
+        if fPlanValue is None or fActualValue is None:
+            continue
+        if abs(fPlanValue) < 0.0000001:
+            if fActualValue > 0:
+                objRow[5] = "＋∞"
+            elif fActualValue < 0:
+                objRow[5] = "－∞"
+            else:
+                objRow[5] = ""
+            continue
+        objRow[5] = "{0:.4f}".format(fActualValue / fPlanValue)
+
     return objInsertedRows
 
 
@@ -6765,6 +6821,15 @@ CP_COMPANY_ALLOWED_NAMES: List[str] = [
     "子会社",
     "投資先",
     "本部",
+    "合計",
+]
+
+
+CP_GROUP_ALLOWED_NAMES: List[str] = [
+    "受託事業-施設運営",
+    "受託事業-その他",
+    "自社-施設運営",
+    "自社-その他",
     "合計",
 ]
 
@@ -6813,6 +6878,7 @@ def parse_plan_numeric_value(pszValue: str) -> Optional[float]:
 
 
 CP_COMPANY_PLAN_CACHE: Optional[Dict[Tuple[str, str], Dict[Tuple[int, int], str]]] = None
+CP_GROUP_PLAN_CACHE: Optional[Dict[Tuple[str, str], Dict[Tuple[int, int], str]]] = None
 
 
 def read_cp_company_plan_map() -> Dict[Tuple[str, str], Dict[Tuple[int, int], str]]:
@@ -6880,6 +6946,74 @@ def read_cp_company_plan_map() -> Dict[Tuple[str, str], Dict[Tuple[int, int], st
     return CP_COMPANY_PLAN_CACHE
 
 
+
+def read_cp_group_plan_map() -> Dict[Tuple[str, str], Dict[Tuple[int, int], str]]:
+    global CP_GROUP_PLAN_CACHE
+    if CP_GROUP_PLAN_CACHE is not None:
+        return CP_GROUP_PLAN_CACHE
+    pszPlanPath: str = os.path.join(get_script_base_directory(), "計画.csv")
+    if not os.path.isfile(pszPlanPath):
+        CP_GROUP_PLAN_CACHE = {}
+        return CP_GROUP_PLAN_CACHE
+
+    objRows: List[List[str]] = []
+    with open(pszPlanPath, "r", encoding="utf-8-sig", newline="") as objFile:
+        objSniffer = csv.Sniffer()
+        pszSample: str = objFile.read(4096)
+        objFile.seek(0)
+        try:
+            objDialect = objSniffer.sniff(pszSample, delimiters=",	")
+            pszDelimiter = objDialect.delimiter
+        except csv.Error:
+            pszDelimiter = "	"
+        objReader = csv.reader(objFile, delimiter=pszDelimiter)
+        for objRow in objReader:
+            objRows.append(list(objRow))
+
+    if not objRows:
+        CP_GROUP_PLAN_CACHE = {}
+        return CP_GROUP_PLAN_CACHE
+
+    objMonthColumns: Dict[int, Tuple[int, int]] = {}
+    for iColumnIndex, pszLabel in enumerate(objRows[0]):
+        objMonth = parse_japanese_year_month_label(pszLabel)
+        if objMonth is not None:
+            objMonthColumns[iColumnIndex] = objMonth
+
+    objAllowedGroupSet = set(CP_GROUP_ALLOWED_NAMES)
+    objGroupStartNames = {
+        "受託事業-施設運営",
+        "受託事業-その他",
+        "自社-施設運営",
+        "自社-その他",
+    }
+    pszCurrentGroup: str = ""
+    bInGroupSection: bool = False
+    objPlanMap: Dict[Tuple[str, str], Dict[Tuple[int, int], str]] = {}
+
+    for objRow in objRows[1:]:
+        pszGroupCell: str = objRow[0].strip() if len(objRow) > 0 else ""
+        if pszGroupCell in objGroupStartNames:
+            bInGroupSection = True
+        if not bInGroupSection:
+            continue
+        if pszGroupCell != "":
+            pszCurrentGroup = pszGroupCell
+        if pszCurrentGroup not in objAllowedGroupSet:
+            continue
+        pszSubject: str = objRow[1].strip() if len(objRow) > 1 else ""
+        if pszSubject == "":
+            continue
+        objKey = (pszCurrentGroup, pszSubject)
+        objMonthMap: Dict[Tuple[int, int], str] = objPlanMap.setdefault(objKey, {})
+        for iColumnIndex, objMonth in objMonthColumns.items():
+            if iColumnIndex >= len(objRow):
+                continue
+            objMonthMap[objMonth] = (objRow[iColumnIndex] or "").strip()
+
+    CP_GROUP_PLAN_CACHE = objPlanMap
+    return CP_GROUP_PLAN_CACHE
+
 def apply_cp_company_plan_values(
     objInsertedRows: List[List[str]],
     pszCurrentLabel: str,
@@ -6940,13 +7074,88 @@ def apply_cp_company_plan_values(
             if fSalesTotal is None or abs(fSalesTotal) < 0.0000001 or fGrossTotal is None:
                 objRow[2] = ""
             else:
-                objRow[2] = "{0:.2f}%".format((fGrossTotal / fSalesTotal) * 100.0)
+                objRow[2] = "{0:.2f}".format((fGrossTotal / fSalesTotal) * 100.0)
             continue
         if bIsRange and pszSubject == "営業利益率":
             if fSalesTotal is None or abs(fSalesTotal) < 0.0000001 or fOperatingTotal is None:
                 objRow[2] = ""
             else:
-                objRow[2] = "{0:.2f}%".format((fOperatingTotal / fSalesTotal) * 100.0)
+                objRow[2] = "{0:.2f}".format((fOperatingTotal / fSalesTotal) * 100.0)
+            continue
+        if bIsRange:
+            objRow[2] = compute_sum_value_text(pszSubject)
+            continue
+        objValues: List[str] = get_monthly_plan_values(pszSubject)
+        objRow[2] = objValues[0] if objValues else ""
+
+
+def apply_cp_group_plan_values(
+    objInsertedRows: List[List[str]],
+    pszCurrentLabel: str,
+    pszPrefix: str,
+) -> None:
+    if pszPrefix != "0002_CP別":
+        return
+    if len(objInsertedRows) < 3:
+        return
+    pszGroup: str = (objInsertedRows[0][0] if objInsertedRows[0] else "").strip()
+    if pszGroup not in set(CP_GROUP_ALLOWED_NAMES):
+        return
+    objMonths: List[Tuple[int, int]] = parse_current_period_months_for_cp(pszCurrentLabel)
+    if not objMonths:
+        return
+    objPlanMap = read_cp_group_plan_map()
+    if not objPlanMap:
+        return
+
+    def get_monthly_plan_values(pszSubject: str) -> List[str]:
+        objMonthMap = objPlanMap.get((pszGroup, pszSubject), {})
+        return [objMonthMap.get(objMonth, "") for objMonth in objMonths]
+
+    def compute_sum_value_text(pszSubject: str) -> str:
+        objValues: List[str] = get_monthly_plan_values(pszSubject)
+        fTotal: float = 0.0
+        bHasNumeric: bool = False
+        for pszValue in objValues:
+            fParsed = parse_plan_numeric_value(pszValue)
+            if fParsed is None:
+                continue
+            bHasNumeric = True
+            fTotal += fParsed
+        if not bHasNumeric:
+            return ""
+        if abs(fTotal - round(fTotal)) < 0.0000001:
+            return str(int(round(fTotal)))
+        return ("{0:.10f}".format(fTotal)).rstrip("0").rstrip(".")
+
+    def compute_sum_numeric(pszSubject: str) -> Optional[float]:
+        pszText = compute_sum_value_text(pszSubject)
+        return parse_plan_numeric_value(pszText)
+
+    bIsRange: bool = len(objMonths) > 1
+    fSalesTotal: Optional[float] = None
+    fGrossTotal: Optional[float] = None
+    fOperatingTotal: Optional[float] = None
+    if bIsRange:
+        fSalesTotal = compute_sum_numeric("純売上高")
+        fGrossTotal = compute_sum_numeric("売上総利益")
+        fOperatingTotal = compute_sum_numeric("営業利益")
+
+    for objRow in objInsertedRows[2:]:
+        pszSubject: str = (objRow[0] if objRow else "").strip()
+        if pszSubject == "":
+            continue
+        if bIsRange and pszSubject == "売上総利益率":
+            if fSalesTotal is None or abs(fSalesTotal) < 0.0000001 or fGrossTotal is None:
+                objRow[2] = ""
+            else:
+                objRow[2] = "{0:.2f}".format((fGrossTotal / fSalesTotal) * 100.0)
+            continue
+        if bIsRange and pszSubject == "営業利益率":
+            if fSalesTotal is None or abs(fSalesTotal) < 0.0000001 or fOperatingTotal is None:
+                objRow[2] = ""
+            else:
+                objRow[2] = "{0:.2f}".format((fOperatingTotal / fSalesTotal) * 100.0)
             continue
         if bIsRange:
             objRow[2] = compute_sum_value_text(pszSubject)
@@ -7730,6 +7939,24 @@ def create_cp_step0007_file_company(pszStep0006Path: str, pszPrefix: str) -> Non
             (iStartYear, iStartMonth),
             (iEndYear, iEndMonth),
         )
+        if iStartMonth == 4 and iEndMonth <= 8:
+            objFiscalBPriorRange: Tuple[Tuple[int, int], Tuple[int, int]] = (
+                (iStartYear - 1, 9),
+                (iStartYear, 8),
+            )
+            pszFiscalBPriorLabel = (
+                f"{objFiscalBPriorRange[0][0]}年{objFiscalBPriorRange[0][1]:02d}月-"
+                f"{objFiscalBPriorRange[1][0]}年{objFiscalBPriorRange[1][1]:02d}月"
+            )
+            pszFiscalBPriorPath = os.path.join(
+                pszDirectory,
+                (
+                    f"{pszPrefix}_step0006_累計_損益計算書_"
+                    f"{pszFiscalBPriorLabel}_{pszCompany}_vertical.tsv"
+                ),
+            )
+            if os.path.isfile(pszFiscalBPriorPath):
+                objPriorRange = objFiscalBPriorRange
         if objPriorRange is not None:
             (iPriorStartYear, iPriorStartMonth), (iPriorEndYear, iPriorEndMonth) = objPriorRange
             pszPriorLabel = (
